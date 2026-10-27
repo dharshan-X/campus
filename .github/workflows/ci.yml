@@ -4,14 +4,33 @@ name: Server Tests
 # Keep the existing triggers, check name, database and test selection.
 on:
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    paths:
+      - "campus/**/*.py"
+      - "campus/**/doctype/**/*.json"
+      - "campus/**/report/**/*.json"
+      - "campus/**/workspace/**/*.json"
+      - ".github/helper/install.sh"
+      - ".github/workflows/ci.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "**/requirements*.txt"
+      - "scripts/**"
   push:
-    branches: [CI/CD]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
+    branches:
+      - develop
+      - main
+      - "release/**"
+    paths:
+      - "campus/**/*.py"
+      - "campus/**/doctype/**/*.json"
+      - "campus/**/report/**/*.json"
+      - "campus/**/workspace/**/*.json"
+      - ".github/helper/install.sh"
+      - ".github/workflows/ci.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "**/requirements*.txt"
+      - "scripts/**"
   schedule:
     - cron: "30 20 * * *" # 02:00 IST
   workflow_dispatch:
@@ -25,7 +44,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: server-tests-${{ github.event.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -33,7 +52,7 @@ defaults:
     shell: bash
 
 env:
-  FULL_SUITE: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.full) }}
+  FULL_SUITE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/'))) }}
   QUICK_MODULES: >-
     campus.tests.test_smoke
     campus.tests.test_navigation
@@ -53,8 +72,10 @@ jobs:
         # Manual full=false and pull requests both use one quick-test runner.
         container: >-
           ${{ fromJSON(
-            (github.event_name != 'pull_request' &&
-            (github.event_name != 'workflow_dispatch' || inputs.full)) &&
+            (github.event_name == 'schedule' ||
+            (github.event_name == 'workflow_dispatch' && inputs.full) ||
+            (github.event_name == 'push' &&
+            (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/')))) &&
             '[1,2,3,4,5,6,7,8]' || '[1]'
           ) }}
 
@@ -218,6 +239,29 @@ jobs:
             echo "| Migrate seconds | ${MIGRATE_SECONDS} |"
             echo "| Test seconds | ${TEST_SECONDS} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Performance budget alerts
+        if: always()
+        env:
+          INSTALL_SECONDS: ${{ steps.install.outputs.seconds || '' }}
+          MIGRATE_SECONDS: ${{ steps.migrate.outputs.seconds || '' }}
+          TEST_SECONDS: ${{ steps.full.outputs.seconds || steps.quick.outputs.seconds || '' }}
+        run: |
+          test_budget=2400
+          if [ "$FULL_SUITE" = "true" ]; then
+            test_budget=7200
+          fi
+          check_budget() {
+            label="$1"
+            value="$2"
+            budget="$3"
+            if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt "$budget" ]; then
+              echo "::warning title=${label} regression::${label} took ${value}s, budget ${budget}s"
+            fi
+          }
+          check_budget "Install" "$INSTALL_SECONDS" 900
+          check_budget "Migrate" "$MIGRATE_SECONDS" 300
+          check_budget "Tests" "$TEST_SECONDS" "$test_budget"
 
       - name: Bench log on failure
         if: failure()
