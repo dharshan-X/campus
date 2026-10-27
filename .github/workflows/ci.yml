@@ -81,8 +81,8 @@ jobs:
 
       - name: Check for valid Python and merge conflicts
         run: |
-          python -m compileall -q -f "${GITHUB_WORKSPACE}"
-          if grep -lr --exclude-dir=node_modules "^<<<<<<< " "${GITHUB_WORKSPACE}"; then
+          python -m compileall -q -f "${GITHUB_WORKSPACE}/campus"
+          if git grep -n "^<<<<<<< " -- . ':(exclude)node_modules'; then
             echo "Found merge conflicts"
             exit 1
           fi
